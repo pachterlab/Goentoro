@@ -1,0 +1,18 @@
+# sequencing data
+*.fastq.gz
+*.bam
+*.sam
+
+# single-cell objects
+*.h5ad
+*.loom
+
+# large matrices
+*.mtx
+*.h5
+
+# macOS junk
+.DS_Store
+
+# raw data folders
+data/raw/
