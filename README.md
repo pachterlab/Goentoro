@@ -29,14 +29,8 @@ Raw sequencing data are available through NCBI BioProject **PRJNA1521539**.
 
 Cells were required to have at least 500 UMIs, at least 200 detected genes, and <5% mitochondrial content. Genes detected in fewer than three cells were excluded. Cells with a Scrublet doublet score >0.3 were removed.
 
-### 3. Differential expression analysis
+### 3. Differential expression and Gene Ontology analysis
 
-`DESeq2_analysis.R`
+`snRNAseq_DESeq2andGO.Rmd`
 
-Differential gene expression analysis of pseudobulk count matrices was performed using DESeq2 (v1.34.0).
-
-### 4. Gene Ontology analysis
-
-`GO_analysis.R`
-
-GO enrichment analysis was performed using clusterProfiler (v4.2.2), with the background defined as all genes expressed in the analyzed cells. GO-term similarity clustering was performed using rrvgo (v1.6.0).
+Differential gene expression analysis of pseudobulk count matrices was performed using DESeq2 (v1.34.0). Gene Ontology enrichment analysis was performed using clusterProfiler (v4.2.2), with the background defined as all genes expressed in the analyzed cells. GO-term similarity clustering was performed using rrvgo (v1.6.0).
