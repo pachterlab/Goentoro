@@ -1,22 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=kb_v4_BW15209_laneMerge
-#SBATCH --time=24:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=40G
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:p100:1
+
 #SBATCH --array=0-3%3
-#SBATCH --output=kb_v4_BW15209_laneMerge_%A_%a.log
-#SBATCH --error=kb_v4_BW15209_laneMerge_%A_%a.err
+#SBATCH --output=kb_v4_laneMerge_%A_%a.log
+#SBATCH --error=kb_v4_laneMerge_%A_%a.err
 
 set -euo pipefail
 
-FASTQ_DIR="/resnick/groups/GoentoroLab/LiY/illumina/20260114_LH00132_0626_B235Y7GLT4/BW15209"
-IDX="/resnick/groups/GoentoroLab/LiY/dmel_r6_115/kallisto_nac_index/dmel_r6_115.idx"
-T2G="/resnick/groups/GoentoroLab/LiY/dmel_r6_115/kallisto_nac_index/t2g.txt"
-OUT_BASE="/resnick/groups/GoentoroLab/LiY/illumina/kb_out_v4"
+FASTQ_DIR="/your/path/fastq"
+IDX="/your/path/kb_ref_nac/dmel_r6_115.idx"
+T2G="/your/path/kb_ref_nac/t2g.txt"
+OUT_BASE="/your/path/kb_out_v4"
 
 SAMPLES=( \
   "Goentoro_Dec15FTC_S1" \
