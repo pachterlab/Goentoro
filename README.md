@@ -1,1 +1,42 @@
 # Goentoro
+
+This repository contains code used for the single-nucleus RNA-sequencing analysis presented in the manuscript **“Early injury responses to nutrient treatment in adult Drosophila limb.”**
+
+Raw sequencing data are available through NCBI BioProject **PRJNA1521539**.
+
+## Analysis workflow
+
+### 1. Alignment and quantification
+
+`.slurm`
+
+A kallisto reference genome index was generated with kb-python (v0.29.5) using the *Drosophila melanogaster* BDGP6.54 genome FASTA and corresponding GTF annotation. Alignment and quantification were performed using kallisto (v0.51.1).
+
+### 2. Quality control, clustering, and pseudobulk preparation
+
+`s.py`
+
+Count matrices were imported into Python and analyzed using Scanpy (v1.10.3). This script contains the main preprocessing and exploratory analysis steps, including:
+
+* quality-control filtering
+* Scrublet doublet removal
+* normalization and highly variable gene selection
+* PCA and neighborhood construction
+* UMAP visualization
+* Leiden clustering
+* cluster marker identification
+* preparation of sample-level pseudobulk count matrices
+
+Cells were required to have at least 500 UMIs, at least 200 detected genes, and <5% mitochondrial content. Genes detected in fewer than three cells were excluded. Cells with a Scrublet doublet score >0.3 were removed.
+
+### 3. Differential expression analysis
+
+`DESeq2_analysis.R`
+
+Differential gene expression analysis of pseudobulk count matrices was performed using DESeq2 (v1.34.0).
+
+### 4. Gene Ontology analysis
+
+`GO_analysis.R`
+
+GO enrichment analysis was performed using clusterProfiler (v4.2.2), with the background defined as all genes expressed in the analyzed cells. GO-term similarity clustering was performed using rrvgo (v1.6.0).
