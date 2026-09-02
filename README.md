@@ -8,9 +8,9 @@ Raw sequencing data are available through NCBI BioProject **PRJNA1521539**.
 
 ### 1. Alignment and quantification
 
-`.slurm`
+`kb_ref_nac.sh` generates the kallisto reference index using kb-python (v0.29.5) with the *Drosophila melanogaster* BDGP6.54 genome FASTA and corresponding GTF annotation.
 
-A kallisto reference genome index was generated with kb-python (v0.29.5) using the *Drosophila melanogaster* BDGP6.54 genome FASTA and corresponding GTF annotation. Alignment and quantification were performed using kallisto (v0.51.1).
+`kb_align.slurm` performs alignment and quantification using kallisto (v0.51.1) with the 10x Genomics v4 chemistry configuration. FASTQ files from two sequencing lanes are processed together for each sample.
 
 ### 2. Quality control, clustering, and pseudobulk preparation
 
