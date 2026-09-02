@@ -12,11 +12,11 @@ Raw sequencing data are available through NCBI BioProject **PRJNA1521539**.
 
 `kb_align.slurm` performs alignment and quantification using kallisto (v0.51.1) with the 10x Genomics v4 chemistry configuration. FASTQ files from two sequencing lanes are processed together for each sample.
 
-### 2. Quality control, clustering, and pseudobulk preparation
+## 2. Quality control, clustering, and pseudobulk preparation
 
-`s.py`
+`QCplots.ipynb` contains quality-control visualization of the single-nucleus RNA-seq datasets, including distributions of UMI counts, detected genes, mitochondrial content, rRNA content.
 
-Count matrices were imported into Python and analyzed using Scanpy (v1.10.3). This script contains the main preprocessing and exploratory analysis steps, including:
+`filter_clustering.ipynb` contains the main downstream analysis performed in Scanpy (v1.10.3), including:
 
 * quality-control filtering
 * Scrublet doublet removal
