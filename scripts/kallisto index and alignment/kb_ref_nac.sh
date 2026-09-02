@@ -1,27 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=kb_ref_nac_re
-#SBATCH --time=6:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=60G
-#SBATCH --output=kb_ref_nac_re_%j.log
-#SBATCH --error=kb_ref_nac_re_%j.err
-#SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=yutian@caltech.edu
 
 set -euo pipefail
 
-echo "[$(date)] Start kb ref (nac, reproduce)"
+echo "[$(date)] Start kb ref (nac)"
 
 export PATH=$HOME/.local/bin:$PATH
 
-BASE="/resnick/groups/GoentoroLab/LiY/dmel_r6_115"
+BASE="/your/path"
 
 GENOME="${BASE}/Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa"
 GTF="${BASE}/Drosophila_melanogaster.BDGP6.54.115.gtf"
 
-OUTDIR="${BASE}/kb_ref_nac_re"
+OUTDIR="${BASE}/kb_ref_nac"
 
 mkdir -p "${OUTDIR}"
 cd "${OUTDIR}"
