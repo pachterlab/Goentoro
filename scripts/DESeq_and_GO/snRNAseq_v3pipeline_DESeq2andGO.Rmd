@@ -1,0 +1,1294 @@
+---
+title: "GO"
+author: "Yutian Li"
+date: "1/26/2026"
+output: html_document
+---
+
+```{r}
+library(DOSE)
+library(pathview)
+library(clusterProfiler)
+library(org.Dm.eg.db)
+library("AnnotationDbi")
+library(enrichplot)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(purrr)
+library(DESeq2)
+library(pheatmap)
+library(tibble)
+```
+
+
+```{r}
+#DESeq2 (muscle cluster) 
+# Paths 
+dir <- "/Users/yutian/Desktop/DESeq2_files/"
+
+# read files
+counts <- read.table(
+  file = file.path(dir, "countData_L7T7_vs_L6C4.tsv"),
+  header = TRUE,
+  row.names = 1,
+  sep = "\t",
+  check.names = FALSE
+)
+
+coldata <- read.table(
+  file = file.path(dir, "colData_L7T7_vs_L6C4.tsv"),
+  header = TRUE,
+  row.names = 1,
+  sep = "\t",
+  check.names = FALSE
+)
+
+# Ensure column order matches coldata rows
+counts <- counts[, rownames(coldata)]
+
+# Basic types
+coldata$condition_group <- factor(coldata$condition_group, levels = c("control", "treated"))
+
+# Build DESeq2 object
+dds <- DESeqDataSetFromMatrix(
+  countData = round(as.matrix(counts)),  
+  colData   = coldata,
+  design    = ~ condition_group
+)
+
+# Filter low-count genes
+smallestGroupSize <- 0
+keep <- rowSums((counts(dds)) >= 10) >= smallestGroupSize
+dds <- dds[keep, ]
+
+# Run DESeq2
+dds <- DESeq(dds)
+```
+
+
+```{r}
+# Results: treated vs control
+res <- results(dds, contrast = c("condition_group", "treated", "control"))
+res_tb <- as.data.frame(res)
+res_tb$gene <- rownames(res_tb)
+
+padj.cutoff <- 0.05
+lfc.cutoff  <- 1
+
+res_sig <- res_tb[
+  !is.na(res_tb$padj) &
+  !is.na(res_tb$log2FoldChange) &
+  res_tb$padj < padj.cutoff &
+  abs(res_tb$log2FoldChange) > lfc.cutoff,
+]
+
+
+res_up <- res_sig[res_sig$log2FoldChange > 0, ]
+res_up <- res_up[order(-res_up$log2FoldChange), ]
+
+res_down <- res_sig[res_sig$log2FoldChange < 0, ]
+res_down <- res_down[order(res_down$log2FoldChange), ]
+```
+
+
+```{r}
+genes_to_map <- unique(c(res_up$gene, res_down$gene))
+
+fb_map <- AnnotationDbi::select(
+  org.Dm.eg.db,
+  keys     = genes_to_map,
+  keytype  = "FLYBASE",
+  columns  = c("SYMBOL", "GENENAME")
+)
+fb_map <- fb_map[!duplicated(fb_map$FLYBASE), ]
+
+annotate_res_df <- function(res_df, map_df) {
+  m <- match(res_df$gene, map_df$FLYBASE)
+  res_df$SYMBOL   <- map_df$SYMBOL[m]
+  res_df$GENENAME <- map_df$GENENAME[m]
+  res_df
+}
+res_up_annot   <- annotate_res_df(res_up, fb_map)
+res_down_annot <- annotate_res_df(res_down, fb_map)
+
+res_up_annot   <- res_up_annot[order(-res_up_annot$log2FoldChange), ]
+res_down_annot <- res_down_annot[order(res_down_annot$log2FoldChange), ]
+
+rownames(res_up_annot)   <- NULL
+rownames(res_down_annot) <- NULL
+```
+
+
+```{r}
+write.csv(
+  res_up_annot,
+  file = "DESeq2_up_all_c12removed.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  res_down_annot,
+  file = "DESeq2_down_all_c12removed.csv",
+  row.names = FALSE
+)
+```
+
+
+```{r}
+#go with background fix
+# 0) choose thresholds (use your own)
+padj.cutoff <- 0.05
+lfc.cutoff  <- 1
+
+# 1) # universe: genes with expression (exclude baseMean==0)
+bg_fbgn <- unique(res_tb$gene[!is.na(res_tb$baseMean) & res_tb$baseMean > 0])
+
+
+# 2) significant set
+res_sig <- res_tb[
+  !is.na(res_tb$padj) &
+  res_tb$padj < padj.cutoff &
+  abs(res_tb$log2FoldChange) > lfc.cutoff,
+]
+
+# 3) split up / down (already FBgn)
+sig_fbgn_up   <- unique(res_sig$gene[res_sig$log2FoldChange > 0])
+sig_fbgn_down <- unique(res_sig$gene[res_sig$log2FoldChange < 0])
+
+ego_up_bg <- enrichGO(
+  gene     = sig_fbgn_up,
+  universe = bg_fbgn,
+  OrgDb    = org.Dm.eg.db,
+  keyType  = "FLYBASE",
+  ont      = "BP",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.1,
+  readable = TRUE
+)
+
+ego_down_bg <- enrichGO(
+  gene     = sig_fbgn_down,
+  universe = bg_fbgn,
+  OrgDb    = org.Dm.eg.db,
+  keyType  = "FLYBASE",
+  ont      = "BP",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.1,
+  readable = TRUE
+)
+
+cluster_summary_up_bg <- data.frame(ego_up_bg)
+cluster_summary_up_bg
+
+cluster_summary_down_bg <- data.frame(ego_down_bg)
+cluster_summary_down_bg
+
+
+dotplot(
+  ego_up_bg,
+  showCategory = 40,
+  font.size = 6,
+) + ggtitle("DEgenes_up")
+
+
+dotplot(
+  ego_down_bg,
+  showCategory = 20,
+  font.size = 6
+) + ggtitle("DEgenes_down")
+
+```
+
+```{r}
+write.csv(
+  cluster_summary_up_bg,
+  file = "/Users/yutian/Desktop/GO_up_all_c12removed.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  cluster_summary_down_bg,
+  file = "/Users/yutian/Desktop/GO_down_all_c12removed.csv",
+  row.names = FALSE
+)
+```
+
+```{r}
+pdf(
+  file = "/Users/yutian/Desktop/GO_up_muscle_dotplot.pdf",
+  width = 7,
+  height = 6
+)
+
+dotplot(
+  ego_up_bg,
+  showCategory = 30,
+  font.size = 6
+) + ggtitle("DEgenes_up")
+
+dev.off()
+
+pdf(
+  file = "/Users/yutian/Desktop/GO_down_muscle_dotplot.pdf",
+  width = 7,
+  height = 6
+)
+
+dotplot(
+  ego_down_bg,
+  showCategory = 30,
+  font.size = 6
+) + ggtitle("DEgenes_down")
+
+dev.off()
+```
+
+
+
+```{r}
+#Volcano Plot - reformatting for muscle
+padj.cutoff <- 0.05
+lfc.cutoff  <- 1
+
+label_genes   <- c("FBgn0283499","FBgn0001257","FBgn0001258","FBgn0033153",
+                   "FBgn0010385","FBgn0260635","FBgn0264922","FBgn0020255",
+                   "FBgn0028978","FBgn0003525","FBgn0005660",
+                   "FBgn0000405","FBgn0000404","FBgn0004106","FBgn0003124",
+                   "FBgn0001224","FBgn0013277","FBgn0013278","FBgn0013279",
+                   "FBgn0010041","FBgn0010042","FBgn0010038",
+                   "FBgn0051354","FBgn0013275","FBgn0001226","FBgn0001230",
+                   "FBgn0001218","FBgn0001233",
+                   "FBgn0001227","FBgn0001227","FBgn0001225","FBgn0001229",
+                   "FBgn0038277","FBgn0030241","FBgn0001120","FBgn0000927",
+                   
+                   "FBgn0038236","FBgn0004169","FBgn0003429","FBgn0265487",
+                   "FBgn0051146","FBgn0023441","FBgn0003380","FBgn0051146",
+                   "FBgn0086680","FBgn0020378","FBgn0264695","FBgn0086906",
+                   "FBgn0034515","FBgn0005666","FBgn0287605",
+                   "FBgn0051374","FBgn0265991","FBgn0035917","FBgn0000116",
+                   "FBgn0027562","FBgn0038294","FBgn0030921","FBgn0032266",
+                   "FBgn0001208","FBgn0036278","FBgn0001114"
+                   )
+
+
+label_symbols <- c("InR","ImpL2","Ldh","Gadd45",
+                   "Def","Diap1","smt3","Ran",
+                   "trbl","stg","Ets21C",
+                   "CycB","CycA","Cdk1","polo",
+                   "Hsp23","Hsp70Ba","Hsp70Bb","Hsp70Bc",
+                   "GstD5","GstD6","GstD2",
+                   "Hsp70Bbb","Hsp70Aa","Hsp27","Hsp68",
+                   "Hsc70-3","Hsp83",
+                   "Hsp67Ba","Hsp70Ab","Hsp26","Hsp67Bc",
+                   "RpS5b","feo","gnu","fs(1)Ya",
+                   
+                   
+                   "Cyp313a1","up","slo","mbl",
+                   "nrm","fus","Sh","Nlg1",
+                   "vvl","Sp1","Mhc","sls",
+                   "CG13428","bt","lncRNA:CR46474",
+                   "sals","Zasp52","Zasp66","Argk",
+                   "CG10345","Mf","CG6290","CG18302",
+                   "Hn","CrzR","Glt"
+                   )
+
+
+vol <- res_tb %>%
+  filter(!is.na(padj), !is.na(log2FoldChange)) %>%
+  mutate(
+    neglog10_padj = -log10(padj),
+    status = case_when(
+      padj < padj.cutoff & log2FoldChange >  lfc.cutoff ~ "Up",
+      padj < padj.cutoff & log2FoldChange < -lfc.cutoff ~ "Down",
+      TRUE ~ "NS"
+    ),
+    label = if_else(
+      gene %in% label_genes,
+      label_symbols[match(gene, label_genes)],
+      NA_character_
+    )
+  )
+
+
+p <- ggplot(vol, aes(x = log2FoldChange, y = neglog10_padj, color = status)) +
+  geom_point(size = 2, alpha = 1) +
+  scale_color_manual(values = c(NS = "grey70", Up = "red3", Down = "blue3")) +
+  geom_vline(xintercept = c(-lfc.cutoff, lfc.cutoff), linetype = "dashed") +
+  geom_hline(yintercept = -log10(padj.cutoff), linetype = "dashed") +
+  geom_point(
+    data = subset(vol, gene %in% label_genes),
+    shape = 21, fill = NA, color = "black", stroke = 1.0, size = 3
+  ) +
+  geom_text_repel(
+    aes(label = label),
+    color = "black",
+    size = 3,
+    max.overlaps = Inf,
+    na.rm = TRUE
+  ) +
+  coord_cartesian(ylim = c(0, 20)) +
+  labs(
+    x = "log2 Fold Change (treated vs control)",
+    y = "-log10(adjusted p-value)",
+    title = "DESeq2 Volcano"
+  ) +
+  theme_classic()
+
+options(repr.plot.width = 7, repr.plot.height = 14)
+
+
+print(p)
+```
+
+
+```{r}
+#Volcano Plot - reformatting
+padj.cutoff <- 0.05
+lfc.cutoff  <- 1
+label_genes   <- c("FBgn0283499","FBgn0001257","FBgn0001258","FBgn0033153",
+                   "FBgn0010385","FBgn0260635","FBgn0264922","FBgn0020255",
+                   "FBgn0028978","FBgn0003525","FBgn0005660",
+                   "FBgn0000405","FBgn0000404","FBgn0004106","FBgn0003124",
+                   "FBgn0001224","FBgn0013277","FBgn0013278","FBgn0013279",
+                   "FBgn0010041","FBgn0010042","FBgn0010038",
+                   "FBgn0051354","FBgn0013275","FBgn0001226","FBgn0001230",
+                   "FBgn0001218","FBgn0001233",
+                   "FBgn0001227","FBgn0001227","FBgn0001225","FBgn0001229",
+                   "FBgn0038277","FBgn0030241","FBgn0001120","FBgn0000927",
+                   
+                   "FBgn0038236","FBgn0004169","FBgn0003429","FBgn0265487",
+                   "FBgn0051146","FBgn0023441","FBgn0003380","FBgn0051146",
+                   "FBgn0086680","FBgn0020378","FBgn0264695","FBgn0086906",
+                   "FBgn0034515","FBgn0005666","FBgn0287605",
+                   "FBgn0051374","FBgn0265991","FBgn0035917","FBgn0000116",
+                   "FBgn0027562","FBgn0038294","FBgn0030921","FBgn0032266",
+                   "FBgn0001208","FBgn0036278","FBgn0001114"
+                   )
+
+
+label_symbols <- c("InR","ImpL2","Ldh","Gadd45",
+                   "Def","Diap1","smt3","Ran",
+                   "trbl","stg","Ets21C",
+                   "CycB","CycA","Cdk1","polo",
+                   "Hsp23","Hsp70Ba","Hsp70Bb","Hsp70Bc",
+                   "GstD5","GstD6","GstD2",
+                   "Hsp70Bbb","Hsp70Aa","Hsp27","Hsp68",
+                   "Hsc70-3","Hsp83",
+                   "Hsp67Ba","Hsp70Ab","Hsp26","Hsp67Bc",
+                   "RpS5b","feo","gnu","fs(1)Ya",
+                   
+                   
+                   "Cyp313a1","up","slo","mbl",
+                   "nrm","fus","Sh","Nlg1",
+                   "vvl","Sp1","Mhc","sls",
+                   "CG13428","bt","lncRNA:CR46474",
+                   "sals","Zasp52","Zasp66","Argk",
+                   "CG10345","Mf","CG6290","CG18302",
+                   "Hn","CrzR","Glt"
+                   )
+
+
+vol <- res_tb %>%
+  filter(!is.na(padj), !is.na(log2FoldChange)) %>%
+  mutate(
+    neglog10_padj = -log10(padj),
+    status = case_when(
+      padj < padj.cutoff & log2FoldChange >  lfc.cutoff ~ "Up",
+      padj < padj.cutoff & log2FoldChange < -lfc.cutoff ~ "Down",
+      TRUE ~ "NS"
+    ),
+    label = if_else(
+      gene %in% label_genes,
+      label_symbols[match(gene, label_genes)],
+      NA_character_
+    )
+  )
+
+
+p <- ggplot(vol, aes(x = log2FoldChange, y = neglog10_padj, color = status)) +
+  geom_point(size = 2, alpha = 1) +
+  scale_color_manual(values = c(NS = "grey70", Up = "red3", Down = "blue3")) +
+  geom_vline(xintercept = c(-lfc.cutoff, lfc.cutoff), linetype = "dashed") +
+  geom_hline(yintercept = -log10(padj.cutoff), linetype = "dashed") +
+  geom_point(
+    data = subset(vol, gene %in% label_genes),
+    shape = 21, fill = NA, color = "black", stroke = 1.0, size = 3
+  ) +
+  geom_text_repel(
+    aes(label = label),
+    color = "black",
+    size = 3,
+    max.overlaps = Inf,
+    na.rm = TRUE
+  ) +
+  labs(
+    x = "log2 Fold Change (treated vs control)",
+    y = "-log10(adjusted p-value)",
+    title = "DESeq2 Volcano"
+  ) +
+  theme_classic()
+
+options(repr.plot.width = 7, repr.plot.height = 14)
+
+
+print(p)
+```
+
+```{r}
+#Volcano Plot - reformatting for epithelial
+padj.cutoff <- 0.05
+lfc.cutoff  <- 1
+
+label_genes   <- c("FBgn0053542","FBgn0031888","FBgn0005660","FBgn0283499","FBgn0261258",
+                   "FBgn0031068","FBgn0020416","FBgn0030904","FBgn0020248","FBgn0020414",
+                   "FBgn0033725","FBgn0035427","FBgn0050042","FBgn0034709",
+                   "FBgn0260635","FBgn0033438","FBgn0000451","FBgn0041087","FBgn0000527",
+                   "FBgn0001224","FBgn0013279","FBgn0010041","FBgn0010042","FBgn0001230",
+                   "FBgn0051869","FBgn0001257","FBgn0027932","FBgn0033033",
+                   "FBgn0035802","FBgn0035499","FBgn0284408","FBgn0004635","FBgn0001258",
+                   "FBgn0015399","FBgn0053087","FBgn0010038","FBgn0243512","FBgn0085256",
+                   
+                   
+                   "FBgn0032299","FBgn0032008","FBgn0040211","FBgn0037697","FBgn0026268",
+                   "FBgn0001114","FBgn0036992","FBgn0028939","FBgn0000658","FBgn0261244",
+                   "FBgn0032666","FBgn0038422","FBgn0038236","FBgn0267033","FBgn0038930",
+                   "FBgn0014073","FBgn0014073","FBgn0085450","FBgn0285917","FBgn0066101",
+                   "FBgn0003651","FBgn0015600","FBgn0002945","FBgn0051300","FBgn0050377"
+                   )
+
+
+label_symbols <- c("upd3","Pvf2","Ets21C","InR","rgn",
+                   "Alr","Idgf1","upd2","stet","Idgf3",
+                   "Cpr49Ac","ckd","Cpr49Ab","Swim",
+                   "Diap1","Mmp2","ect","wun2","ebony",
+                   "Hsp23","Hsp70Bc","GstD5","GstD6","Hsp68",
+                   "CG31869","ImpL2","Akap200","scaf",
+                   "Pura","Chd64","trol","rho","Ldh",
+                   "kek1","LRP1","GstD2","puc","CG34227",
+                   
+                   
+                   
+                   "CG17127","CG14277","hgo","GstZ2","antdh",
+                   "Glt","Hpd","NimC2","fj","inaE",
+                   "CG5758","CG14880","Cyp313a1","mamo","BomT3",
+                   "Tie","Lst","Snoo","sbb","LpR1",
+                   "svp","toc","nkd","CG31300","CG30377"
+                   )
+
+
+vol <- res_tb %>%
+  filter(!is.na(padj), !is.na(log2FoldChange)) %>%
+  mutate(
+    neglog10_padj = -log10(padj),
+    status = case_when(
+      padj < padj.cutoff & log2FoldChange >  lfc.cutoff ~ "Up",
+      padj < padj.cutoff & log2FoldChange < -lfc.cutoff ~ "Down",
+      TRUE ~ "NS"
+    ),
+    label = if_else(
+      gene %in% label_genes,
+      label_symbols[match(gene, label_genes)],
+      NA_character_
+    )
+  )
+
+
+p <- ggplot(vol, aes(x = log2FoldChange, y = neglog10_padj, color = status)) +
+  geom_point(size = 2, alpha = 1) +
+  scale_color_manual(values = c(NS = "grey70", Up = "red3", Down = "blue3")) +
+  geom_vline(xintercept = c(-lfc.cutoff, lfc.cutoff), linetype = "dashed") +
+  geom_hline(yintercept = -log10(padj.cutoff), linetype = "dashed") +
+  geom_point(
+    data = subset(vol, gene %in% label_genes),
+    shape = 21, fill = NA, color = "black", stroke = 1.0, size = 3
+  ) +
+  geom_text_repel(
+    aes(label = label),
+    color = "black",
+    size = 3,
+    max.overlaps = Inf,
+    na.rm = TRUE
+  ) +
+  coord_cartesian(ylim = c(40, 200)) +
+  labs(
+    x = "log2 Fold Change (treated vs control)",
+    y = "-log10(adjusted p-value)",
+    title = "DESeq2 Volcano"
+  ) +
+  theme_classic()
+
+options(repr.plot.width = 7, repr.plot.height = 14)
+
+
+print(p)
+```
+
+
+```{r}
+ggsave(
+  "volcano_40_200_epithelial.pdf",
+  plot = p,
+  width = 8,
+  height = 7,
+  units = "in"
+)
+```
+
+
+```{r}
+term_list <- c(
+  "mito",
+  "spindle",
+  "division",
+  "cytokine",
+  "cell cycle"
+)
+
+keys <- str_to_lower(term_list)
+
+go_terms_kw <- cluster_summary_up_bg %>%
+  mutate(desc_lc = str_to_lower(Description)) %>%
+  rowwise() %>%
+  mutate(matched_kw = list(keys[str_detect(desc_lc, fixed(keys))])) %>%
+  ungroup() %>%
+  filter(lengths(matched_kw) > 0) %>%
+  mutate(matched_kw = map_chr(matched_kw, ~ paste(.x, collapse = ", "))) %>%
+  select(ID, Description, matched_kw, GeneRatio, p.adjust, Count, geneID) %>%
+  arrange(p.adjust)
+
+go_terms_kw
+
+```
+
+```{r}
+genes_from_kw_terms <- go_terms_kw %>%
+  transmute(gene = .data[["geneID"]]) %>%
+  filter(!is.na(gene)) %>%
+  separate_rows(gene, sep = "/") %>%
+  mutate(gene = str_trim(gene)) %>%
+  filter(gene != "") %>%
+  distinct(gene) %>%
+  pull(gene)
+
+nrow(go_terms_kw)
+length(genes_from_kw_terms)
+head(genes_from_kw_terms, 80)
+
+```
+```{r}
+genes_from_kw_terms_with_fc <- go_terms_kw %>%
+  select(ID, Description, matched_kw, GeneRatio, p.adjust, Count, geneID) %>%
+  separate_rows(geneID, sep = "/") %>%
+  rename(SYMBOL = geneID) %>%
+  mutate(SYMBOL = str_trim(SYMBOL)) %>%
+  filter(SYMBOL != "") %>%
+  left_join(
+    res_up_annot %>%
+      select(SYMBOL, gene, log2FoldChange, padj),
+    by = "SYMBOL"
+  ) %>%
+  arrange(matched_kw, desc(log2FoldChange))
+
+genes_from_kw_terms_unique_fc <- genes_from_kw_terms_with_fc %>%
+  left_join(
+    res_up_annot %>% select(SYMBOL, GENENAME),
+    by = "SYMBOL"
+  ) %>%
+  group_by(SYMBOL, gene, GENENAME, log2FoldChange) %>%
+  summarise(
+    GO_terms = paste(unique(Description), collapse = "; "),
+    matched_kw = paste(unique(matched_kw), collapse = ", "),
+    n_GO_terms = n_distinct(ID),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(log2FoldChange))
+
+head(genes_from_kw_terms_unique_fc, 80)
+```
+```{r}
+write.csv(
+  genes_from_kw_terms_unique_fc,
+  "genes_from_kw_terms_unique_fc.csv",
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# 1) vst matrix
+vsd <- vst(dds, blind = FALSE)
+mat <- assay(vsd)              # rows = feature IDs (likely FBgn), cols = samples
+ids <- rownames(mat)
+
+# 2) map IDs -> SYMBOL (assume FlyBase IDs)
+map <- AnnotationDbi::select(
+  org.Dm.eg.db,
+  keys     = ids,
+  keytype  = "FLYBASE",
+  columns  = c("SYMBOL")
+)
+
+# keep 1-1 mapping per ID (drop duplicates if any)
+map1 <- map %>%
+  filter(!is.na(SYMBOL)) %>%
+  distinct(FLYBASE, .keep_all = TRUE)
+
+# 3) attach SYMBOL to matrix, drop unmapped
+mat2 <- mat[map1$FLYBASE, , drop = FALSE]
+rownames(mat2) <- map1$SYMBOL
+
+# 4) if multiple IDs map to same SYMBOL, aggregate (mean)
+mat_sym <- rowsum(mat2, group = rownames(mat2)) / as.vector(table(rownames(mat2)))
+
+# 5) subset by your GO-derived SYMBOL list
+genes_use <- intersect(genes_from_kw_terms, rownames(mat_sym))
+length(genes_use)
+
+mat_sub <- mat_sym[genes_use, , drop = FALSE]
+
+# 6) z-score per gene and plot
+mat_z <- t(scale(t(mat_sub)))
+```
+
+```{r}
+pdf("GO_keywords_heatmap_muscle.pdf", width = 8, height = 12)
+
+pheatmap(
+  mat_z,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 6,
+  border_color = NA
+)
+
+dev.off()
+```
+
+
+
+
+
+```{r}
+term_list <- c(
+  "morphogenesis"
+)
+
+keys <- str_to_lower(term_list)
+
+go_terms_kw <- cluster_summary_up_bg %>%
+  mutate(desc_lc = str_to_lower(Description)) %>%
+  rowwise() %>%
+  mutate(matched_kw = list(keys[str_detect(desc_lc, fixed(keys))])) %>%
+  ungroup() %>%
+  filter(lengths(matched_kw) > 0) %>%
+  mutate(matched_kw = map_chr(matched_kw, ~ paste(.x, collapse = ", "))) %>%
+  select(ID, Description, matched_kw, GeneRatio, p.adjust, Count, geneID) %>%
+  arrange(p.adjust)
+
+go_terms_kw
+
+```
+```{r}
+genes_from_kw_terms_with_fc <- go_terms_kw %>%
+  select(ID, Description, matched_kw, GeneRatio, p.adjust, Count, geneID) %>%
+  separate_rows(geneID, sep = "/") %>%
+  rename(SYMBOL = geneID) %>%
+  mutate(SYMBOL = str_trim(SYMBOL)) %>%
+  filter(SYMBOL != "") %>%
+  left_join(
+    res_up_annot %>%
+      select(SYMBOL, gene, log2FoldChange, padj),
+    by = "SYMBOL"
+  ) %>%
+  arrange(matched_kw, desc(log2FoldChange))
+
+genes_from_kw_terms_unique_fc <- genes_from_kw_terms_with_fc %>%
+  left_join(
+    res_up_annot %>% select(SYMBOL, GENENAME),
+    by = "SYMBOL"
+  ) %>%
+  group_by(SYMBOL, gene, GENENAME, log2FoldChange) %>%
+  summarise(
+    GO_terms = paste(unique(Description), collapse = "; "),
+    matched_kw = paste(unique(matched_kw), collapse = ", "),
+    n_GO_terms = n_distinct(ID),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(log2FoldChange))
+
+head(genes_from_kw_terms_unique_fc, 80)
+```
+
+```{r}
+write.csv(
+  genes_from_kw_terms_unique_fc,
+  "morphogenesis_genes_from_kw_terms_unique_fc.csv",
+  row.names = FALSE
+)
+```
+
+
+
+
+
+
+```{r}
+#Instead of all GO term genes, keywords only
+genes_use <- c("CycB","CycA","Cdk1","Ets21C",
+               "InR","Ran","trbl","Gadd45",
+               "polo","Cks30A", "geminin", "aurB",
+               "Mhc", "sals", "sls", "Zasp52", "Zasp66")
+
+
+mat_sub <- mat_sym[genes_use, , drop = FALSE]
+mat_z <- t(scale(t(mat_sub)))
+pdf("select_keywords_heatmap_newmuscle.pdf", width=8, height=4)
+
+pheatmap(
+  mat_z,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 10,
+  fontsize_col = 10,
+  border_color = NA,
+  breaks = seq(-2, 2, length.out = 101)
+)
+
+dev.off()
+```
+
+
+```{r}
+# Selected keyword genes
+genes_use <- c(
+  # cell cycle 
+  "CycA","CycB","CycB3","CycE",
+  "Cdk1","polo","aurA","aurB","Incenp",
+  "mad2","pav","asp",
+
+  # regeneration
+  "Ets21C","rgn","Alr",
+
+  # muscle differentiation
+  "Mhc","sals","sls","Zasp52","Zasp66","up","mbl","bt"
+)
+
+# make sure genes exist
+genes_use2 <- intersect(genes_use, rownames(mat_sym))
+
+coldata <- as.data.frame(colData(dds))
+
+# align metadata to matrix columns
+coldata <- coldata[colnames(mat_sym), , drop = FALSE]
+
+control_cols <- colnames(mat_sym)[coldata$condition_group == "control"]
+treated_cols <- colnames(mat_sym)[coldata$condition_group == "treated"]
+
+mean_control <- rowMeans(mat_sym[genes_use2, control_cols, drop = FALSE])
+mean_treated <- rowMeans(mat_sym[genes_use2, treated_cols, drop = FALSE])
+
+# one-column fold-change matrix
+mat_fc <- matrix(
+  mean_treated - mean_control,
+  ncol = 1
+)
+
+rownames(mat_fc) <- genes_use2
+
+pdf("select_keywords_one_column_fc_newmuscle.pdf", width = 3, height = 4)
+
+pheatmap(
+  mat_fc,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 10,
+  fontsize_col = 10,
+  border_color = NA,
+  breaks = seq(-2, 2, length.out = 101)
+)
+
+dev.off()
+```
+
+
+
+```{r}
+# Selected keyword genes
+genes_use <- c(
+  # cell cycle 
+  "polo","Cks30A","CycA","asp",
+  "mad2","aurB","PCNA","Cdk1","CycB","aurA"
+
+  # muscle differentiation
+  #"Mhc","sals","sls","Zasp52"
+)
+
+df_fc <- as.data.frame(res) %>%
+  rownames_to_column("FLYBASE")
+
+map <- AnnotationDbi::select(
+  org.Dm.eg.db,
+  keys     = df_fc$FLYBASE,
+  keytype  = "FLYBASE",
+  columns  = c("SYMBOL")
+)
+
+df_fc2 <- df_fc %>%
+  left_join(map, by = "FLYBASE") %>%
+  filter(!is.na(SYMBOL)) %>%
+  distinct(SYMBOL, .keep_all = TRUE)
+
+genes_use2 <- intersect(genes_use, df_fc2$SYMBOL)
+
+df_sub <- df_fc2 %>%
+  filter(SYMBOL %in% genes_use2)
+
+mat_fc <- df_sub %>%
+  select(SYMBOL, log2FoldChange) %>%
+  column_to_rownames("SYMBOL") %>%
+  as.matrix()
+
+mat_fc <- mat_fc[genes_use2, , drop = FALSE]
+
+
+```
+
+```{r}
+pdf("select_keywords_one_column_log2fc_newmuscle.pdf", width = 3.5, height = 6)
+
+bk <- c(
+  seq(min(mat_fc, na.rm = TRUE), 0, length.out = 50),
+  seq(0, max(mat_fc, na.rm = TRUE), length.out = 51)[-1]
+)
+
+cols <- c(
+  colorRampPalette(c("#3b6fb6", "#ffffff"))(49),
+  colorRampPalette(c("#ffffff", "#fff7bc", "#fdae6b", "#d7301f"))(50)
+)
+
+pheatmap(
+  mat_fc,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 9,
+  fontsize_col = 10,
+  show_colnames = FALSE,
+  angle_col = 0,
+  border_color = NA,
+  breaks = bk,
+  main = "Log2FC",
+  color = cols,
+  cellwidth = 40,
+  cellheight = 10,
+  legend_breaks = c(0, 3, 6),
+  legend_labels = c("0", "3", "6")
+
+)
+
+dev.off()
+```
+
+dev.off()
+```
+
+
+
+
+
+
+```{r}
+# Selected keyword genes for epi
+genes_use <- c(
+  # morphogenesis 
+  "Mmp2","kkv","scaf","rho","rn","spz3","lz","en","Wnt4","Ser",
+  
+  # regeneration
+  "Ets21C","rgn","Alr","Idgf1"
+
+)
+
+df_fc <- as.data.frame(res) %>%
+  rownames_to_column("FLYBASE")
+
+map <- AnnotationDbi::select(
+  org.Dm.eg.db,
+  keys     = df_fc$FLYBASE,
+  keytype  = "FLYBASE",
+  columns  = c("SYMBOL")
+)
+
+df_fc2 <- df_fc %>%
+  left_join(map, by = "FLYBASE") %>%
+  filter(!is.na(SYMBOL)) %>%
+  distinct(SYMBOL, .keep_all = TRUE)
+
+genes_use2 <- intersect(genes_use, df_fc2$SYMBOL)
+
+df_sub <- df_fc2 %>%
+  filter(SYMBOL %in% genes_use2)
+
+mat_fc <- df_sub %>%
+  select(SYMBOL, log2FoldChange) %>%
+  column_to_rownames("SYMBOL") %>%
+  as.matrix()
+
+mat_fc <- mat_fc[genes_use2, , drop = FALSE]
+
+```
+
+```{r}
+pdf("select_keywords_one_column_log2fc_newepithelial.pdf", width = 3.5, height = 6)
+
+
+bk <- c(
+  seq(min(mat_fc, na.rm = TRUE), 0, length.out = 50),
+  seq(0, max(mat_fc, na.rm = TRUE), length.out = 51)[-1]
+)
+
+cols <- c(
+  colorRampPalette(c("#3b6fb6", "#ffffff"))(49),
+  colorRampPalette(c("#ffffff", "#fff7bc", "#fdae6b", "#d7301f"))(50)
+)
+
+pheatmap(
+  mat_fc,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 9,
+  fontsize_col = 10,
+  show_colnames = FALSE,
+  angle_col = 0,
+  border_color = NA,
+  breaks = bk,
+  main = "Log2FC",
+  color = cols,
+  cellwidth = 40,
+  cellheight = 10,
+  legend_breaks = c(0, 3, 6),
+  legend_labels = c("0", "3", "6")
+
+)
+
+
+dev.off()
+```
+
+
+```{r}
+
+mat_fc_actual <- ifelse(
+  mat_fc >= 0,
+  2^mat_fc,
+  -2^abs(mat_fc)
+)
+
+bk <- c(
+  seq(min(mat_fc_actual, na.rm = TRUE), 0, length.out = 50),
+  seq(0, max(mat_fc_actual, na.rm = TRUE), length.out = 51)[-1]
+)
+
+cols <- c(
+  colorRampPalette(c("#3b6fb6", "#ffffff"))(49),
+  colorRampPalette(c("#ffffff", "#fff7bc", "#fdae6b", "#d7301f"))(50)
+)
+
+pheatmap(
+  mat_fc_actual,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 9,
+  fontsize_col = 10,
+  show_colnames = FALSE,
+  angle_col = 0,
+  border_color = NA,
+  color = cols,
+  breaks = bk,
+  main = "Fold change",
+  cellwidth = 40,
+  cellheight = 10
+)
+```
+
+```{r}
+mat_fc_signed <- ifelse(
+  mat_fc >= 0,
+  2^mat_fc - 1,
+  -(1 / (2^mat_fc) - 1)
+)
+
+bk <- c(
+  seq(min(mat_fc_signed, na.rm = TRUE), 0, length.out = 50),
+  seq(0, max(mat_fc_signed, na.rm = TRUE), length.out = 51)[-1]
+)
+
+cols <- colorRampPalette(c(
+  "#3b6fb6",
+  "#ffffff",
+  "#fff7bc",
+  "#fdae6b",
+  "#d7301f"
+))(length(bk) - 1)
+
+pheatmap(
+  mat_fc_signed,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_row = 9,
+  fontsize_col = 10,
+  show_colnames = FALSE,
+  border_color = NA,
+  color = cols,
+  breaks = bk,
+  main = "Fold change",
+  cellwidth = 40,
+  cellheight = 10
+)
+```
+
+
+
+
+
+
+
+```{r}
+library(simplifyEnrichment)
+library(ComplexHeatmap)
+
+go_ids <- ego_up_bg@result$ID[!is.na(ego_up_bg@result$ID) & ego_up_bg@result$p.adjust < 0.05]
+go_ids <- unique(go_ids)
+
+sim_mat <- GO_similarity(go_ids)
+```
+
+
+```{r}
+pdf("simplifyGO.pdf", width = 10, height = 10)
+simplifyGO(sim_mat)
+dev.off()
+
+```
+
+
+```{r}
+ht <- Heatmap(
+  sim_mat,
+  name = "GO sim",
+  show_row_names = FALSE,
+  show_column_names = FALSE,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE
+)
+
+draw(ht)
+
+```
+
+
+
+```{r}
+# 1) cluster on distance = 1 - similarity
+d <- as.dist(1 - sim_mat)
+
+hc <- hclust(d, method = "average")   
+k  <- 10
+cl <- cutree(hc, k = k)
+
+
+#  term
+pick_rep <- function(mat, cl_vec) {
+  reps <- character()
+  for (cc in sort(unique(cl_vec))) {
+    ids <- names(cl_vec)[cl_vec == cc]
+    sub <- mat[ids, ids, drop = FALSE]
+    score <- rowMeans(sub, na.rm = TRUE)
+    reps[as.character(cc)] <- names(which.max(score))
+  }
+  reps
+}
+
+rep_go <- pick_rep(sim_mat, cl)
+rep_go
+
+res <- ego_up_bg@result
+
+rep_df <- data.frame(
+  cluster = as.integer(names(rep_go10)),
+  GOID    = unname(rep_go10),
+  stringsAsFactors = FALSE
+)
+
+m <- match(rep_df$GOID, res$ID)
+
+rep_df$Description <- res$Description[m]
+rep_df$Count       <- res$Count[m]
+rep_df$padj        <- res$p.adjust[m]
+
+rep_df <- rep_df[order(rep_df$cluster), ]
+rep_df
+```
+
+```{r}
+ord <- hc$order
+sim_ord <- sim_mat[ord, ord, drop = FALSE]
+cl_ord  <- cl10[ord]
+
+# 标出每个 cluster 的代表 GO（右侧打标签）
+at_idx <- match(rep_go10, rownames(sim_ord))
+lab    <- paste0("C", names(rep_go10), ": ", rep_go10)
+
+ht <- Heatmap(
+  sim_ord,
+  name = "GO sim",
+  row_split = cl_ord,
+  column_split = cl_ord,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_row_names = FALSE,
+  show_column_names = FALSE
+)
+
+# 右侧标注代表 term 的 GO ID（先标 GOID，下一步再换成 Description）
+# 用 cluster -> Description 做标签
+desc_map <- setNames(rep_df$Description, rep_df$cluster)
+
+lab_desc <- paste0(
+  "C", names(rep_go10), ": ",
+  desc_map[as.integer(names(rep_go10))]
+)
+
+# 重新画（其余参数不变）
+ht2 <- ht + rowAnnotation(
+  rep = anno_mark(
+    at = at_idx,
+    labels = lab_desc,
+    labels_gp = grid::gpar(fontsize = 8)
+  )
+)
+
+
+draw(ht2)
+```
+
+```{r}
+library(rrvgo)
+
+go_ids <- cluster_summary_up_bg$ID
+
+simMatrix <- calculateSimMatrix(
+  go_ids,
+  orgdb = "org.Dm.eg.db", 
+  ont   = "BP",
+  method = "Rel"
+)
+scores <- setNames(-log10(cluster_summary_up_bg$qvalue), cluster_summary_up_bg$ID)
+
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Dm.eg.db")
+
+
+```
+```{r}
+treemapPlot(reducedTerms)
+```
+
+```{r}
+# ---- Make treemap blocks (parents) have non-zero size ----
+rt2 <- reducedTerms
+
+# If "size" exists and some parents have size 0, assign each parent the sum of its cluster sizes
+if ("size" %in% colnames(rt2)) {
+  cluster_total <- tapply(rt2$size, rt2$cluster, sum, na.rm = TRUE)
+  is_parent <- rt2$go == rt2$parent
+  rt2$size[is_parent & (rt2$size == 0 | is.na(rt2$size))] <-
+    cluster_total[as.character(rt2$cluster[is_parent & (rt2$size == 0 | is.na(rt2$size))])]
+}
+
+# Plot with smaller labels (more will fit)
+treemapPlot(rt2, fontsize.labels = 8)
+```
+
+
+```{r}
+rt2 <- reducedTerms
+
+# for each cluster, compute total size of all terms in that cluster
+cluster_total <- tapply(rt2$size, rt2$cluster, sum, na.rm = TRUE)
+
+# assign that total size to the parent row (go == parent)
+is_parent <- rt2$go == rt2$parent
+rt2$size[is_parent] <- cluster_total[ as.character(rt2$cluster[is_parent]) ]
+
+treemapPlot(rt2)
+
+```
+
+
+
+```{r}
+reducedTerms[reducedTerms$go == "GO:0031099", c("term","size","score")]
+
+rt2 <- reducedTerms
+
+rt2$size[rt2$go == "GO:0031099"] <- 
+  max(rt2$size) * 0.6   # inflate visually
+
+treemapPlot(rt2)
+
+```
+```{r}
+blocks <- reducedTerms[reducedTerms$go == reducedTerms$parent, ]
+treemapPlot(blocks)
+
+```
+
+
+
+```{r}
+pdf("treemap_reducedTerms_epithelial_up.pdf",
+    width = 8,
+    height = 6)
+
+treemapPlot(reducedTerms)
+
+dev.off()
+
+
+```
+
+
+```{r}
+go_ids_down <- cluster_summary_down_bg$ID
+
+simMatrix_down <- calculateSimMatrix(
+  go_ids_down,
+  orgdb = "org.Dm.eg.db", 
+  ont   = "BP",
+  method = "Rel"
+)
+scores_down <- setNames(-log10(cluster_summary_down_bg$qvalue), cluster_summary_down_bg$ID)
+
+reducedTerms_down <- reduceSimMatrix(simMatrix_down,
+                                scores_down,
+                                threshold=0.7,
+                                orgdb="org.Dm.eg.db")
+
+treemapPlot(reducedTerms_down)
+
+```
+
+```{r}
+pdf("treemap_reducedTerms_epithelial_down.pdf",
+    width = 8,
+    height = 6)
+
+treemapPlot(reducedTerms_down)
+
+dev.off()
+
+```
+
